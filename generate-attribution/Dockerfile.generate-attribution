@@ -1,0 +1,26 @@
+################# BUILDER ######################
+ARG BUILDER_IMAGE=unused
+ARG BASE_IMAGE=unused
+FROM ${BUILDER_IMAGE} as builder
+
+RUN set -x && \
+    install_rpm bash && \
+    cleanup "base"
+
+
+################# FINAL ######################
+FROM ${BASE_IMAGE}
+
+COPY --from=builder /newroot /
+
+# Create app directory
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm install
+
+# Bundle app source
+COPY ./generate-attribution-file.js LICENSE-2.0.txt .
+
+ENTRYPOINT [ "node", "generate-attribution-file.js" ]

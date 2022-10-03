@@ -497,9 +497,9 @@ async function generateAttribution(dependenciesByLicenseType) {
         attributionOutput += "\------\n";
         summaryOutput += `${licenseType} => ${sortedDeps.length}\n`
     });
-
-    await fsPromises.writeFile(path.join(projectAttributionDirectory, "summary.txt"), summaryOutput);
-    return fsPromises.writeFile(path.join(projectAttributionDirectory, "ATTRIBUTION.txt"), attributionOutput);
+    await fsPromises.mkdir(attributionOutputDirectory, {recursive: true})
+    await fsPromises.writeFile(path.join(attributionOutputDirectory, "summary.txt"), summaryOutput);
+    return fsPromises.writeFile(path.join(attributionOutputDirectory, "ATTRIBUTION.txt"), attributionOutput);
 }
 
 async function loadHttpCache() {
@@ -538,6 +538,10 @@ const gitTagPath = path.join(projectDirectory, 'GIT_TAG');
 const projectLicensesDirectory = path.join(projectOutputDirectory, "LICENSES");
 const projectAttributionDirectory = path.join(projectOutputDirectory, "attribution");
 
+let attributionOutputDirectory = projectAttributionDirectory;
+if(process.argv.length > 6) {
+    attributionOutputDirectory = process.argv[6];
+}
 
 loadHttpCache()
     .then(execute)

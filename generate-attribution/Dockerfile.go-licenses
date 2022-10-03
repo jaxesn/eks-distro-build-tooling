@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=unused
+FROM ${BASE_IMAGE}
+
+ARG GOPROXY=direct
+
+RUN set -x && \
+    export GOPROXY=${GOPROXY} && \
+    go install github.com/google/go-licenses@v1.2.1 && \
+    go clean -modcache -cache
+
+ENTRYPOINT [ "go-licenses" ]
