@@ -107,6 +107,8 @@ BASE_IMAGE_NAME?=eks-distro-base
 BASE_IMAGE_COMPONENT?=$(BASE_IMAGE_NAME)
 VERSIONED_BASE_IMAGE_TAG?=$(call ADD_BASE_VERSIONED_VARIANT,$(BASE_IMAGE_TAG))
 
+COMPILER_VERSION=$(word 1,$(subst -, ,$(VERSIONED_VARIANT)))
+
 # if the image was built, either via this being a pre/post submit job
 # or a periodic which pushed and created the -pushed file
 # use the current IMAGE_TAG as the tag
@@ -114,6 +116,8 @@ VERSIONED_BASE_IMAGE_TAG?=$(call ADD_BASE_VERSIONED_VARIANT,$(BASE_IMAGE_TAG))
 BASE_IMAGE_TAG_FROM_FILE=$(call BASE_TAG_FROM_TAG_FILE,$(BASE_IMAGE_NAME))
 BUILT_IMAGE_TAG_FROM_FILE=$(call BASE_TAG_FROM_TAG_FILE,$(IMAGE_NAME:%-builder=%))
 BASE_IMAGE_TAG=$(call IMAGE_TAG_FOR_VARIANT,$(BASE_IMAGE_NAME),)
+
+GLIBC_BUILDER_IMAGE=$(BASE_IMAGE_REPO)/$(GLIBC_VARIANT_NAME)-builder:$(call IMAGE_TAG_FOR_VARIANT,$(GLIBC_VARIANT_NAME),)
 
 BASE_IMAGE=$(BASE_IMAGE_REPO)/$(BASE_IMAGE_COMPONENT):$(VERSIONED_BASE_IMAGE_TAG)
 BUILDER_IMAGE=$(BASE_IMAGE_REPO)/$(BASE_IMAGE_COMPONENT)-builder:$(VERSIONED_BASE_IMAGE_TAG)
@@ -127,6 +131,39 @@ LATEST_TAGS=$(foreach tag,$(LATEST),$(IMAGE_REPO)/$(IMAGE_COMPONENT):$(tag))
 LATEST_IMAGE=$(shell echo $(LATEST_TAGS) | sed "s/ \+/,/g")
 # ************************************************************
 
+# ****************** COMPILER BASE VARIANTS ******************
+BASE_COMPILER_VARIANT_VERSIONS=base yum gcc
+# ************************************************************
+
+# ****************** PYTHON VARIANTS *************************
+PYTHON_VARIANT_NAME=eks-distro-minimal-base-python
+BASE_PYTHON_VARIANT_VERSIONS=3.9
+PYTHON_3.9_FULL_VERSION=3.9.14
+
+BASE_PYTHON_COMPILER_VARIANT_VERSIONS=$(foreach ver,$(BASE_COMPILER_VARIANT_VERSIONS),$(addsuffix -$(ver),$(BASE_PYTHON_VARIANT_VERSIONS)))
+# ************************************************************
+
+# ****************** NODEJS VARIANTS *************************
+NODEJS_VARIANT_NAME=eks-distro-minimal-base-nodejs
+BASE_NODEJS_VARIANT_VERSIONS=16
+NODEJS_16_FULL_VERSION=16.18.0
+
+BASE_NODEJS_COMPILER_VARIANT_VERSIONS=$(foreach ver,$(BASE_COMPILER_VARIANT_VERSIONS),$(addsuffix -$(ver),$(BASE_NODEJS_VARIANT_VERSIONS)))
+# ************************************************************
+
+# ****************** GOLANG VARIANTS *************************
+GOLANG_VARIANT_NAME=eks-distro-minimal-base-golang
+BASE_GOLANG_VARIANT_VERSIONS=1.15 1.16 1.17 1.18 1.19
+
+GOLANG_1.15_FULL_VERSION=1.15.15
+GOLANG_1.16_FULL_VERSION=1.16.15
+GOLANG_1.17_FULL_VERSION=1.17.13
+GOLANG_1.18_FULL_VERSION=1.18.6
+GOLANG_1.19_FULL_VERSION=1.19.1
+
+BASE_GOLANG_COMPILER_VARIANT_VERSIONS=$(foreach ver,$(BASE_COMPILER_VARIANT_VERSIONS),$(addsuffix -$(ver),$(BASE_GOLANG_VARIANT_VERSIONS)))
+# ************************************************************
+
 # ************** MINIMAL VARIANT MAGIC VARS ******************
 
 # Foreach minimal variant (+ versioned variants) new vars are created to make it easier to override
@@ -138,7 +175,8 @@ LATEST_IMAGE=$(shell echo $(LATEST_TAGS) | sed "s/ \+/,/g")
 #  - BUILDER_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_${varaint} - for versioned variants
 
 VARIANTS=base base-nonroot base-glibc base-iptables base-nsenter base-docker-client base-nginx \
-	base-csi-ebs base-csi base-kind base-haproxy base-git base-python
+	base-csi-ebs base-csi base-kind base-haproxy base-git base-compiler \
+	base-python base-python-compiler base-nodejs base-nodejs-compiler base-golang-compiler
 
 ALL_IMAGE_NAMES=eks-distro-base
 
@@ -195,6 +233,10 @@ BUILDCTL_IMAGE_TAGS=,oci-mediatypes=true,\"name=$(IMAGE),$(LATEST_IMAGE)\"
 BUILDCTL_BUILD_ARGS?=
 PLATFORMS?=linux/amd64,linux/arm64
 
+# export PRUNE_BUILDCTL=true
+export USE_BUILDX=true
+export DOCKER_CONFIG=/root/.docker-foo
+
 define BUILDCTL
 	$(MAKE_ROOT)/../scripts/buildkit.sh \
 		build \
@@ -228,6 +270,77 @@ define CREATE_PR_TARGET_BODY
 		$(eval UPDATE_BASE_IMAGE_RESULT:=$(call UPDATE_BASE_IMAGE,$(VERSIONED_IMAGE_TAG),$(IMAGE_NAME),$(AL_TAG))) @echo Updated base image tag file, \
 		$(shell echo No update) \
 	)
+endef
+
+# $1 - language short name (python/nodejs/golang/java)
+# $2 - no runtime image
+define COMPILER_TARGET_OVERRIDES
+$(eval COMPILER_VARIANTS:=$(BASE_$(call TO_UPPER,$(1))_COMPILER_VARIANT_VERSIONS))
+$(eval VERSIONS:=$(BASE_$(call TO_UPPER,$(1))_VARIANT_VERSIONS))
+$(eval RUNTIME_VERSIONED_VARIANTS:=$(ALL_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_$(call TO_UPPER,$(1))))
+$(eval BUILDER_RUNTIME_VERSIONED_VARIANTS:=$(BUILDER_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_$(call TO_UPPER,$(1))))
+$(eval COMPILER_VERSIONED_VARIANTS:=$(ALL_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_$(call TO_UPPER,$(1))_COMPILER))
+$(eval VARIANT_NAME:=$($(call TO_UPPER,$(1))_VARIANT_NAME))
+
+.PHONY: $(1)-compiler-images
+$(1)-compiler-images: $(addprefix minimal-images-base-$(1)-compiler-,$(COMPILER_VARIANTS))
+
+$(RUNTIME_VERSIONED_VARIANTS) $(COMPILER_VERSIONED_VARIANTS): DOCKERFILE=Dockerfile.minimal-base-$(1)
+$(RUNTIME_VERSIONED_VARIANTS) $(COMPILER_VERSIONED_VARIANTS): COMPILER_FULL_VERSION=$$($(call TO_UPPER,$(1))_$$(COMPILER_VERSION)_FULL_VERSION)
+$(RUNTIME_VERSIONED_VARIANTS) $(COMPILER_VERSIONED_VARIANTS): LATEST=$$(if $(filter $(AL_TAG),2022),$$(COMPILER_VERSION)-al22 $$(COMPILER_FULL_VERSION)-al22,$$(COMPILER_VERSION) $$(COMPILER_FULL_VERSION) $$(COMPILER_VERSION)-al2 $$(COMPILER_FULL_VERSION)-al2)
+
+# For all images we are using the cached compiled staged from the runtime image to avoid compiling during each build
+$(BUILDER_RUNTIME_VERSIONED_VARIANTS) $(COMPILER_VERSIONED_VARIANTS): BUILDCTL_NO_CACHE=--opt no-cache=builder-$(1)-base
+# for golang use the golang-builder since there is no runtime image
+$(BUILDER_RUNTIME_VERSIONED_VARIANTS) $(COMPILER_VERSIONED_VARIANTS): BUILDCTL_IMPORT_CACHE=type=registry,ref=$(BASE_IMAGE_REPO)/$(if $(filter true,$(2)),$(1)-builder,minimal-images-base-$(1)-builder):$$(call IMAGE_TAG_FOR_VARIANT,$(VARIANT_NAME)-$$(COMPILER_VERSION),$$(COMPILER_VERSION)-$$(IMAGE_TAG))
+
+# Runtime image overrides
+$(RUNTIME_VERSIONED_VARIANTS): BUILDCTL_BUILD_ARGS+=VERSIONED_VARIANT AL_TAG COMPILER_FULL_VERSION
+$(RUNTIME_VERSIONED_VARIANTS): IMAGE_COMPONENT=eks-distro-minimal-base-$(1)
+
+$(BUILDER_RUNTIME_VERSIONED_VARIANTS): IMAGE_COMPONENT=eks-distro-minimal-base-$(1)-builder
+$(BUILDER_RUNTIME_VERSIONED_VARIANTS): BUILDCTL_BUILD_ARGS+=GLIBC_BUILDER_IMAGE
+
+$(RUNTIME_VERSIONED_VARIANTS): BASE_IMAGE_NAME=eks-distro-minimal-base-glibc
+
+$(eval $(foreach ver,$(VERSIONS),$(call COMPILER_TARGET_OVERRIDES_FOR_VERSION,base-$(1)-compiler,$(ver),$(1),$(2))))
+
+$(eval $(foreach ver,$(VERSIONS),$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_$(call TO_UPPER,$(1))_$(ver)): VERSIONED_VARIANT=$(ver)))
+
+endef
+
+# $1 - variant
+# $2 - versioned variant
+# $3 - image component override
+# $4 - no runtime image
+define COMPILER_TARGET_OVERRIDES_FOR_VERSION
+$(eval BUILDER_TARGETS:=$(BUILDER_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_$(call TO_UPPER,$(1))))
+$(eval BASE_TARGETS:=$(ALL_MINIMAL_IMAGE_TARGETS_FOR_$(call TO_UPPER,$(1)-$(2))_BASE))
+$(eval YUM_TARGETS:=$(ALL_MINIMAL_IMAGE_TARGETS_FOR_$(call TO_UPPER,$(1)-$(2))_YUM))
+$(eval GCC_TARGETS:=$(ALL_MINIMAL_IMAGE_TARGETS_FOR_$(call TO_UPPER,$(1)-$(2))_GCC))
+
+$(BASE_TARGETS) $(YUM_TARGETS) $(GCC_TARGETS): BASE_IMAGE_COMPONENT=compiler-base
+$(BASE_TARGETS) $(YUM_TARGETS) $(GCC_TARGETS): IMAGE_COMPONENT=$(3)
+$(BASE_TARGETS) $(YUM_TARGETS) $(GCC_TARGETS): BUILDCTL_BUILD_ARGS+=VERSIONED_VARIANT AL_TAG COMPILER_VERSION COMPILER_FULL_VERSION IS_COMPILER
+$(BASE_TARGETS) $(YUM_TARGETS) $(GCC_TARGETS): IS_COMPILER=true
+
+$(BUILDER_TARGETS): IMAGE_COMPONENT=$(3)-builder
+$(BUILDER_TARGETS): BUILDCTL_BUILD_ARGS+=GLIBC_BUILDER_IMAGE
+$(BUILDER_TARGETS): $(if $(and $(filter false,$(4)),$(filter true,$(BUILD_DEPS))),minimal-images-base-$(word 2,$(subst -, ,$(1)))-$(2),)
+
+$(BASE_TARGETS): VERSIONED_VARIANT=$(2)
+$(BASE_TARGETS): BASE_IMAGE_NAME=eks-distro-minimal-base-compiler-base
+
+$(YUM_TARGETS): VERSIONED_VARIANT=$(2)-yum
+$(YUM_TARGETS): BASE_VERSIONED_VARIANT=yum
+$(YUM_TARGETS): BASE_IMAGE_NAME=eks-distro-minimal-base-compiler-yum
+
+$(GCC_TARGETS): VERSIONED_VARIANT=$(2)-gcc
+$(GCC_TARGETS): BASE_VERSIONED_VARIANT=gcc
+$(GCC_TARGETS): BASE_IMAGE_NAME=eks-distro-minimal-base-compiler-gcc
+
+.PHONY: $(3)-$(2)-compiler-images
+$(3)-$(2)-compiler-images: $(addprefix minimal-images-base-$(3)-compiler-$(2)-,base yum gcc)
 endef
 
 # There is no local images target since the minimal images build on each other we need a registry to push to
@@ -343,8 +456,42 @@ $(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_KIND): BASE_IMAGE_NAME=eks-distro-minimal-b
 # ***********************************************************
 
 # ****************** PYTHON VARIANTS ************************
-$(ALL_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_): BASE_IMAGE_NAME=eks-distro-minimal-base-glibc
-$(ALL_MINIMAL_IMAGE_TARGETS_FOR_PYTHON_3.9): VERSIONED_VARIANT=3.9
+$(eval $(call COMPILER_TARGET_OVERRIDES,python,false))
+
+# ************************************************************
+
+# ****************** NODEJS VARIANTS ************************
+$(eval $(call COMPILER_TARGET_OVERRIDES,nodejs,false))
+
+# ************************************************************
+
+# ****************** GOLANG VARIANTS ************************
+$(eval $(call COMPILER_TARGET_OVERRIDES,golang,true))
+
+# ************************************************************
+
+# ****************** COMPILER BASE VARIANTS ******************
+.PHONY: compiler-base-images
+compiler-base-images: $(addprefix minimal-images-base-compiler-,$(BASE_COMPILER_VARIANT_VERSIONS))
+
+$(ALL_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_COMPILER): DOCKERFILE=Dockerfile.minimal-base-compiler
+$(ALL_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_COMPILER): IMAGE_COMPONENT=compiler-base
+$(BUILDER_MINIMAL_IMAGE_VERSIONED_VARIANTS_TARGETS_FOR_BASE_COMPILER): IMAGE_COMPONENT=compiler-base-builder
+
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_BASE): BASE_IMAGE_NAME=eks-distro-minimal-base-glibc
+
+# ****************** COMPILER YUM ******************
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_YUM): VERSIONED_VARIANT=yum
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_YUM): BUILDCTL_BUILD_ARGS+=VERSIONED_VARIANT
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_YUM): BASE_IMAGE_NAME=eks-distro-minimal-base-compiler-base
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_YUM): BASE_IMAGE_COMPONENT=compiler-base
+
+# ****************** COMPILER GCC ******************
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_GCC): VERSIONED_VARIANT=gcc
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_GCC): BUILDCTL_BUILD_ARGS+=VERSIONED_VARIANT
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_GCC): BASE_IMAGE_NAME=eks-distro-minimal-base-compiler-yum
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_GCC): BASE_IMAGE_COMPONENT=compiler-base
+$(ALL_MINIMAL_IMAGE_TARGETS_FOR_BASE_COMPILER_GCC): BASE_VERSIONED_VARIANT=yum
 # ************************************************************
 
 # ****************** STANDARD EKS-DISTRO IMAGE TARGETS *******

@@ -313,3 +313,191 @@ check_base-python-3.9() {
         exit 1
     fi
 }
+
+check_base-compiler-base() {
+    local -r image_component="${1:-compiler-base}"
+    for platform in ${PLATFORMS//,/ }; do
+        if ! docker run --rm --platform=$platform --pull=always $IMAGE_REPO/$image_component:$IMAGE_TAG curl --version; then
+            echo "compiler-base issue!"
+            exit 1
+        fi
+    done
+}
+
+check_base-compiler-yum() {
+    local -r image_component="${1:-compiler-base}"
+    for platform in ${PLATFORMS//,/ }; do
+        if ! docker run --rm --platform=$platform --pull=always $IMAGE_REPO/$image_component:$IMAGE_TAG yum --version; then
+            echo "compiler-base issue!"
+            exit 1
+        fi
+    done
+}
+
+check_base-compiler-gcc() {
+    local -r image_component="${1:-compiler-base}"
+    for platform in ${PLATFORMS//,/ }; do
+        if ! docker run --rm --platform=$platform --pull=always $IMAGE_REPO/$image_component:$IMAGE_TAG gcc --version; then
+            echo "compiler-base issue!"
+            exit 1
+        fi
+    done
+}
+
+check_base-python-compiler() {
+    local -r version="$1"
+    local -r variant="$2"
+
+    check_base-compiler-$2 python
+    check_base-python3 "$1" python
+
+    for platform in ${PLATFORMS//,/ }; do
+        if ! docker run --rm --platform=$platform --pull=always $IMAGE_REPO/python:$IMAGE_TAG pip3 --version; then
+            echo "python issue!"
+            exit 1
+        fi
+    done
+}
+
+check_base-python-compiler-3.9-base() {
+    check_base-python-compiler 3.9 base
+}
+
+check_base-python-compiler-3.9-yum() {
+    check_base-python-compiler 3.9 yum
+}
+
+check_base-python-compiler-3.9-gcc() {
+    check_base-python-compiler 3.9 gcc
+}
+
+check_base-nodejs() {
+    local -r version="$1"
+    local -r image_component="${2:-eks-distro-minimal-base-nodejs}"
+    for platform in ${PLATFORMS//,/ }; do
+        if docker run --rm --platform=$platform --pull=always $IMAGE_REPO/$image_component:$IMAGE_TAG node --version | grep -v $version; then
+            echo "nodejs issue!"
+            exit 1
+        fi
+
+        if ! docker run --rm --platform=$platform --pull=always $IMAGE_REPO/$image_component:$IMAGE_TAG env node; then
+            echo "nodejs issue!"
+            exit 1
+        fi
+
+    done
+}
+
+check_base-nodejs-16() {
+    check_base-nodejs 16
+
+    if docker run --rm --platform=$platform --pull=always $IMAGE_REPO/eks-distro-minimal-base-nodejs:$IMAGE_TAG npm --version > /dev/null 2>&1; then
+        echo "npm should not exist!"
+        exit 1
+    fi
+}
+
+check_base-nodejs-compiler() {
+    local -r version="$1"
+    local -r variant="$2"
+
+    check_base-compiler-$2 nodejs
+    check_base-nodejs-16 "$1" nodejs
+
+    for platform in ${PLATFORMS//,/ }; do
+        if docker run --rm --platform=$platform --pull=always $IMAGE_REPO/nodejs:$IMAGE_TAG npm --version | grep -v '8'; then
+            echo "npm issue!"
+            exit 1
+        fi
+    done
+}
+
+
+check_base-nodejs-compiler-16-base() {
+    check_base-nodejs-compiler 16 base
+}
+
+check_base-nodejs-compiler-16-yum() {
+    check_base-nodejs-compiler 16 yum
+}
+
+check_base-nodejs-compiler-16-gcc() {
+    check_base-nodejs-compiler 16 gcc
+}
+
+check_base-golang-compiler() {
+    local -r version="$1"
+    local -r variant="$2"
+
+    check_base-compiler-$2 golang
+    
+    for platform in ${PLATFORMS//,/ }; do
+        if docker run --rm --platform=$platform --pull=always $IMAGE_REPO/golang:$IMAGE_TAG go version | grep -v $version; then
+            echo "golang issue!"
+            exit 1
+        fi
+    done
+}
+
+
+check_base-golang-compiler-15-base() {
+    check_base-golang-compiler 15 base
+}
+
+check_base-golang-compiler-15-yum() {
+    check_base-golang-compiler 15 yum
+}
+
+check_base-golang-compiler-15-gcc() {
+    check_base-golang-compiler 15 gcc
+}
+
+check_base-golang-compiler-16-base() {
+    check_base-golang-compiler 16 base
+}
+
+check_base-golang-compiler-16-yum() {
+    check_base-golang-compiler 16 yum
+}
+
+check_base-golang-compiler-16-gcc() {
+    check_base-golang-compiler 16 gcc
+}
+
+check_base-golang-compiler-17-base() {
+    check_base-golang-compiler 17 base
+}
+
+check_base-golang-compiler-17-yum() {
+    check_base-golang-compiler 17 yum
+}
+
+check_base-golang-compiler-17-gcc() {
+    check_base-golang-compiler 17 gcc
+}
+
+check_base-golang-compiler-18-base() {
+    check_base-golang-compiler 18 base
+}
+
+check_base-golang-compiler-18-yum() {
+    check_base-golang-compiler 18 yum
+}
+
+check_base-golang-compiler-18-gcc() {
+    check_base-golang-compiler 18 gcc
+}
+
+check_base-golang-compiler-19-base() {
+    check_base-golang-compiler 19 base
+}
+
+check_base-golang-compiler-19-yum() {
+    check_base-golang-compiler 19 yum
+}
+
+check_base-golang-compiler-19-gcc() {
+    check_base-golang-compiler 19 gcc
+}
+
+$TEST

@@ -1,0 +1,3 @@
+check-update compiler-base 2 gcc
+echo false > /override/root/eks-distro-minimal-base-compiler-gcc-pushed
+echo No updates for minimal-update-base-compiler-gcc

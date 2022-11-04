@@ -1,0 +1,3 @@
+check-update nodejs 2 16-gcc
+echo false > /override/root/eks-distro-minimal-base-nodejs-compiler-16-gcc-pushed
+echo No updates for minimal-update-base-nodejs-compiler-16-gcc

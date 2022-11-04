@@ -1,0 +1,3 @@
+check-update eks-distro-minimal-base-nodejs 2 16
+echo false > /override/root/eks-distro-minimal-base-nodejs-16-pushed
+exit 1

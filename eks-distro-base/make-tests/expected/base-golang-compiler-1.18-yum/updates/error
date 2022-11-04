@@ -1,0 +1,3 @@
+check-update golang 2 1.18-yum
+echo false > /override/root/eks-distro-minimal-base-golang-compiler-1.18-yum-pushed
+exit 1

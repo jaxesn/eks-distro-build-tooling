@@ -1,0 +1,2 @@
+update_base_image.sh 3.9-yum-test-tag eks-distro-minimal-base-python-compiler-3.9-yum 2
+echo Updated base image tag file

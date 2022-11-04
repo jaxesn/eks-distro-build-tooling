@@ -1,0 +1,2 @@
+update_base_image.sh 16-test-tag eks-distro-minimal-base-nodejs-compiler-16-base 2
+echo Updated base image tag file

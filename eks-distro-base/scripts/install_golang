@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This script is used to install the necessary dependencies on the pod
+# building the builder-base as well as into the builder-base itself
+# Note: since we run the build in fargate we do not have access to an overlayfs
+# so we use a single script from the dockerfile instead of layers to avoid
+# layer duplicate and running out of disk space
+# This does make local builds painful.  Its recommended to add new additions
+# in their own script/layer while testing and then when you are done add
+# to here
+
+set -e
+set -o pipefail
+set -x
+
+GOLANG_VERSION="$1"
+
+USR_BIN=$NEWROOT/usr/bin
+GO_INSTALL_DIR=$NEWROOT/usr/local/go
+GOSDK=$NEWROOT/usr/local/sdk
+GOPATH=$NEWROOT/usr/local/go
+
+IS_AL22="${IS_AL22:-false}"
+
+function build::go::extract() {
+    local version=$1
+    mkdir -p /tmp/go-extracted
+    for rpm in /tmp/golang-*.rpm; do $(cd /tmp/go-extracted && rpm2cpio $rpm | cpio -idmv); done
+
+    local -r golang_version=$(/tmp/go-extracted/usr/lib/golang/bin/go version | grep -o "go[0-9].* " | xargs)
+
+    mkdir -p $GO_INSTALL_DIR
+    mv /tmp/go-extracted/usr/lib/golang/* $GO_INSTALL_DIR
+
+    if [ "$IS_AL22" = true ]; then
+        mv /tmp/go-extracted/usr/share/licenses/golang/* $GO_INSTALL_DIR
+    else
+        mv /tmp/go-extracted/usr/share/doc/golang-*/* $GO_INSTALL_DIR
+    fi
+
+    # fix symlinks installed via rpm
+    for bin in go gofmt; do
+        [ -L $GO_INSTALL_DIR/bin/linux_$TARGETARCH/$bin ] && unlink $GO_INSTALL_DIR/bin/linux_$TARGETARCH/$bin
+        ln -s $GO_INSTALL_DIR/bin/linux_$TARGETARCH/$bin ../$bin
+    done
+
+    rm -rf /tmp/go-extracted /tmp/golang-*.rpm
+}
+
+function build::go::install(){
+    # Set up specific go version by using go get, additional versions apart from default can be installed by calling
+    # the function again with the specific parameter.
+    local version=$1
+
+    # AL2 provides a longer supported version of golang, use AL2 package when possible
+    local yum_provided_versions="1.13"
+    local eks_built_versions="1.16.15 1.15.15"
+    
+    if [[ $eks_built_versions =~ (^|[[:space:]])${version}($|[[:space:]]) && $IS_AL22 == false ]]; then
+        local artifacts_bucket='eks-d-postsubmit-artifacts'
+        local arch='x86_64'
+        if [ "${TARGETARCH}" = "amd64" ]; then 
+            local arch='x86_64'
+        else
+            local arch='aarch64'
+        fi
+
+        for artifact in golang golang-bin golang-race; do
+          curl https://$artifacts_bucket.s3.amazonaws.com/golang/go/go$version/RPMS/$arch/$artifact-$version-1.amzn2.0.1.$arch.rpm -o /tmp/$artifact-$version-1.amzn2.0.1.$arch.rpm
+        done
+
+        for artifact in golang-docs golang-misc golang-tests golang-src; do
+          curl https://$artifacts_bucket.s3.amazonaws.com/golang/go/go$version/RPMS/noarch/$artifact-$version-1.amzn2.0.1.noarch.rpm -o /tmp/$artifact-$version-1.amzn2.0.1.noarch.rpm
+        done
+
+        build::go::extract $version
+    elif [[ $yum_provided_versions =~ (^|[[:space:]])${version%.*}($|[[:space:]]) ]]; then
+        # Do not install rpm directly instead follow eks-distro base images pattern
+        # of downloading and install rpms directly
+        for package in golang golang-bin golang-docs golang-misc golang-src golang-tests golang-race; do
+            # arm al22 does not provide golang-race
+            if [[ $(yum --showduplicates list $package) ]]; then
+                al2_package_version=$(yum --showduplicates list $package | awk -F ' ' '{print $2}' | grep ${version%.*} | tail -n 1)
+                yumdownloader --destdir=/tmp -x "*.i686" $package-$al2_package_version
+            fi
+        done
+        build::go::extract $version
+    else
+        GOLANG_MAJOR_VERSION=${version%.*}
+        GOLANG_DOWNLOAD_URL="https://go.dev/dl/go$version.linux-$TARGETARCH.tar.gz"
+        mkdir -p ${GO_INSTALL_DIR}
+        wget \
+            --progress dot:giga \
+            --max-redirect=1 \
+            --domains go.dev \
+            $GOLANG_DOWNLOAD_URL -O go${version}.linux-$TARGETARCH.tar.gz
+        #sha256sum -c $BASE_DIR/golang-$TARGETARCH-checksum
+        tar -C ${GO_INSTALL_DIR} -xzf go${version}.linux-$TARGETARCH.tar.gz --strip-components=1
+        # for binary in go gofmt; do
+        #     ln -s /usr/local/sdk/go${version}/bin/${binary} ${USR_BIN}/${binary}
+        # done
+        # mkdir -p ${GOPATH}/bin
+        # ln -s /usr/local/sdk/go${version}/bin/go ${GOPATH}/bin/go${version}
+
+        rm go${version}.linux-$TARGETARCH.tar.gz
+    fi
+}
+
+build::go::install $GOLANG_VERSION

@@ -1,0 +1,3 @@
+check-update golang 2 1.18
+echo false > /override/root/eks-distro-minimal-base-golang-compiler-1.18-base-pushed
+echo No updates for minimal-update-base-golang-compiler-1.18-base
