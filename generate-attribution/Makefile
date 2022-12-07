@@ -33,11 +33,12 @@ IMAGE_OUTPUT=push=true
 
 GOPROXY?=direct
 
+NETRC=--secret id=netrc,src=$(HOME)/.netrc
 
 ADD_VERSIONED_TO_TAG=$(if $(VERSIONED_VARIANT),$(VERSIONED_VARIANT)-$(1),$(1))
 
 define BUILDCTL
-	buildctl \
+	$(MAKE_ROOT)/../scripts/buildkit.sh \
 		build \
 		--frontend dockerfile.v0 \
 		--opt filename=$(DOCKERFILE) \
@@ -45,6 +46,7 @@ define BUILDCTL
 		--opt build-arg:BASE_IMAGE=$(BASE_IMAGE) \
 		--opt build-arg:GOPROXY=$(GOPROXY) \
 		--opt build-arg:BUILDER_IMAGE=$(BUILDER_IMAGE) \
+		$(if $(wildcard $(HOME)/.netrc),$(NETRC),) \
 		--progress plain \
 		--local dockerfile=./ \
 		--local context=. \
@@ -75,9 +77,9 @@ generate-attribution-image: buildkit-check
 .PHONY: go-licenses-image-%
 go-licenses-image-%: IMAGE_NAME=go-licenses
 go-licenses-image-%: VERSIONED_VARIANT=$*
-go-licenses-image-%: BASE_IMAGE_NAME=eks-distro-minimal-base-golang
+go-licenses-image-%: BASE_IMAGE_NAME=golang
 go-licenses-image-%: DOCKERFILE=Dockerfile.go-licenses
-go-licenses-image-%: BASE_IMAGE_TAG=$(shell yq e ".al2.\"eks-distro-minimal-base-golang$(VERSIONED_VARIANT)\"" $(MAKE_ROOT)/../EKS_DISTRO_TAG_FILE.yaml)
+go-licenses-image-%: BASE_IMAGE_TAG=$(shell yq e ".al2.\"eks-distro-minimal-base-golang-compiler-$(VERSIONED_VARIANT)-base\"" $(MAKE_ROOT)/../EKS_DISTRO_TAG_FILE.yaml)
 go-licenses-image-%: buildkit-check
 	$(call BUILDCTL)
 

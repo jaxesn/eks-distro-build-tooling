@@ -3,7 +3,8 @@ FROM ${BASE_IMAGE}
 
 ARG GOPROXY=direct
 
-RUN set -x && \
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    set -x && \
     export GOPROXY=${GOPROXY} && \
     go install github.com/google/go-licenses@v1.2.1 && \
     go clean -modcache -cache
